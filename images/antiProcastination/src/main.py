@@ -1,0 +1,221 @@
+import logging
+import os
+from datetime import date, datetime, timedelta, timezone
+
+from util import clickup, emailer, holiday, storage
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] [%(asctime)s] [%(name)s] %(message)s",
+    encoding="utf-8",
+    force=True
+)
+
+LOGGER = logging.getLogger(__name__)
+
+
+PRIORITY_DAYS_ENV_KEYS = {
+    "urgent": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_URGENT",
+    "high": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_HIGH",
+    "normal": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_NORMAL",
+    "low": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_LOW",
+    "none": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_NONE",
+}
+
+
+def get_days_before_advice_by_priority() -> dict[str, int]:
+    days_by_priority = {}
+
+    for priority_name, env_key in PRIORITY_DAYS_ENV_KEYS.items():
+        days = int(os.getenv(env_key, "0"))
+        if days <= 0:
+            raise ValueError(f"{env_key} must be greater than zero")
+        days_by_priority[priority_name] = days
+
+    return days_by_priority
+
+
+def get_days_before_advice(task: dict, days_by_priority: dict[str, int]) -> int:
+    priority_name = clickup.get_priority_name(task)
+    return days_by_priority.get(priority_name, days_by_priority["none"])
+
+
+def parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def get_workday_only_space_ids() -> set[str]:
+    raw_space_ids = os.getenv("ANTI_PROCASTINATION_WORKDAY_ONLY_SPACE_IDS", "")
+    return {
+        space_id.strip()
+        for space_id in raw_space_ids.split(",")
+        if space_id.strip()
+    }
+
+
+def is_workday(reference_date: date, has_workday_only_spaces: bool) -> bool:
+    if not has_workday_only_spaces:
+        return True
+
+    if reference_date.weekday() >= 5:
+        return False
+
+    return not holiday.is_holiday(reference_date)
+
+
+def should_skip_space(
+    space_id: str | None,
+    workday_only_space_ids: set[str],
+    today_is_workday: bool
+) -> bool:
+    if space_id not in workday_only_space_ids:
+        return False
+
+    return not today_is_workday
+
+
+def is_complete(task: dict) -> bool:
+    status = task.get("status")
+
+    if isinstance(status, dict):
+        status_name = str(status.get("status", "")).lower()
+        status_type = str(status.get("type", "")).lower()
+        return status_type in {"closed", "done"} or status_name in {"complete", "completed", "closed", "done"}
+
+    return str(status or "").lower() in {"complete", "completed", "closed", "done"}
+
+
+def should_send_advice(saved_task: dict, current_task: dict, days_before_advice: int) -> bool:
+    if is_complete(current_task):
+        return False
+
+    first_seen_at = saved_task.get("first_seen_at")
+    if not first_seen_at:
+        return False
+
+    threshold = datetime.now(timezone.utc) - timedelta(days=days_before_advice)
+    if parse_iso(first_seen_at) > threshold:
+        return False
+
+    return True
+
+
+def build_email_task(saved_task: dict, current_task: dict) -> dict:
+    task_id = saved_task["task_id"]
+    parent_task = get_parent_task(current_task)
+    space_id = clickup.get_space_id(current_task)
+
+    return {
+        **saved_task,
+        "task_name": current_task.get("name", saved_task.get("task_name", task_id)),
+        "task_url": current_task.get("url", saved_task.get("task_url", "")),
+        "current_status": storage.get_status_name(current_task),
+        "due_date": current_task.get("due_date", ""),
+        "space_name": clickup.get_space_name(space_id),
+        "space_id": space_id,
+        "list_name": get_list_name(current_task),
+        "parent_task_name": parent_task.get("name", "") if parent_task else "",
+        "parent_task_url": parent_task.get("url", "") if parent_task else "",
+        "priority": clickup.get_priority_name(current_task),
+        "time_estimate": current_task.get("time_estimate", ""),
+        "days_before_advice": saved_task.get("days_before_advice", ""),
+    }
+
+
+def get_list_name(task: dict) -> str:
+    task_list = task.get("list")
+
+    if isinstance(task_list, dict):
+        return str(task_list.get("name", ""))
+
+    return ""
+
+
+def get_parent_task(task: dict) -> dict | None:
+    parent_task_id = clickup.get_parent_task_id(task)
+
+    if not parent_task_id:
+        return None
+
+    try:
+        return clickup.get_task(parent_task_id)
+    except Exception:
+        LOGGER.exception("[TASK] failed to get parent task=%s", parent_task_id)
+        return None
+
+
+def handler(event, context):
+    days_by_priority = get_days_before_advice_by_priority()
+    workday_only_space_ids = get_workday_only_space_ids()
+    today_is_workday = is_workday(date.today(), len(workday_only_space_ids) > 0)
+    totals = {
+        "candidate_tasks_saved": 0,
+        "candidate_tasks_skipped_non_workday_space": 0,
+        "saved_tasks_checked": 0,
+        "saved_tasks_skipped_non_workday_space": 0,
+        "status_updates_saved": 0,
+        "emails_sent": 0,
+        "emails_skipped_incomplete_config": 0,
+        "celebration_emails_sent": 0,
+        "celebration_emails_skipped_incomplete_config": 0,
+        "success_streak_days": 0,
+        "tasks_not_found": 0,
+    }
+    tasks_to_advise = []
+
+    for task in clickup.get_tasks():
+        if should_skip_space(clickup.get_space_id(task), workday_only_space_ids, today_is_workday):
+            totals["candidate_tasks_skipped_non_workday_space"] += 1
+            continue
+
+        storage.save_candidate(task)
+        totals["candidate_tasks_saved"] += 1
+        LOGGER.info("[TASK] saved candidate task=%s", task["id"])
+
+    for saved_task in storage.get_all_tasks():
+        task_id = saved_task["task_id"]
+        totals["saved_tasks_checked"] += 1
+
+        try:
+            current_task = clickup.get_task(task_id)
+        except Exception:
+            LOGGER.exception("[TASK] failed to get current status task=%s", task_id)
+            totals["tasks_not_found"] += 1
+            continue
+
+        if should_skip_space(clickup.get_space_id(current_task), workday_only_space_ids, today_is_workday):
+            totals["saved_tasks_skipped_non_workday_space"] += 1
+            continue
+
+        storage.save_current_status(task_id, current_task)
+        totals["status_updates_saved"] += 1
+
+        days_before_advice = get_days_before_advice(current_task, days_by_priority)
+        if should_send_advice(saved_task, current_task, days_before_advice):
+            tasks_to_advise.append(build_email_task({
+                **saved_task,
+                "days_before_advice": days_before_advice,
+            }, current_task))
+
+    if tasks_to_advise:
+        storage.reset_success_streak()
+        LOGGER.info("[EMAIL] sending advice for %s tasks", len(tasks_to_advise))
+        email_sent = emailer.send_advice(tasks_to_advise)
+        if email_sent:
+            for task in tasks_to_advise:
+                storage.mark_email_sent(task["task_id"])
+            totals["emails_sent"] += len(tasks_to_advise)
+        else:
+            totals["emails_skipped_incomplete_config"] += len(tasks_to_advise)
+    else:
+        streak_days = storage.record_success_day(date.today())
+        totals["success_streak_days"] = streak_days
+        LOGGER.info("[EMAIL] sending celebration streak_days=%s", streak_days)
+        email_sent = emailer.send_celebration(streak_days)
+        if email_sent:
+            totals["celebration_emails_sent"] += 1
+        else:
+            totals["celebration_emails_skipped_incomplete_config"] += 1
+
+    LOGGER.info("[RESULT] %s", totals)
+    return totals

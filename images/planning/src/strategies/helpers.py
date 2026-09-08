@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 
 from .base import PlanningContext
 
-DEFAULT_PLANNING_PULSE_RANGES = {
+DEFAULT_NEXT_TASK_TOO_FAR_AWAY_RANGES = {
     "urgent": 1,
     "high": 3,
     "normal": 7,
@@ -66,36 +66,36 @@ def get_parent_priority_name(context: PlanningContext) -> str:
 
     if isinstance(priority, dict):
         priority_name = str(priority.get("priority", "")).strip().lower()
-        if priority_name in DEFAULT_PLANNING_PULSE_RANGES:
+        if priority_name in DEFAULT_NEXT_TASK_TOO_FAR_AWAY_RANGES:
             return priority_name
 
         priority_id = str(priority.get("id", "")).strip()
         return PRIORITY_ID_TO_NAME.get(priority_id, "none")
 
     priority_value = str(priority).strip().lower()
-    if priority_value in DEFAULT_PLANNING_PULSE_RANGES:
+    if priority_value in DEFAULT_NEXT_TASK_TOO_FAR_AWAY_RANGES:
         return priority_value
 
     return PRIORITY_ID_TO_NAME.get(priority_value, "none")
 
 
-def get_planning_pulse_range(priority_name: str) -> int:
-    env_key = f"PLANNING_PULSE_RANGE_{priority_name.upper()}"
+def get_next_task_too_far_away_range(priority_name: str) -> int:
+    env_key = f"NEXT_TASK_TOO_FAR_AWAY_RANGE_{priority_name.upper()}"
     raw_value = os.getenv(env_key)
 
     if raw_value in (None, ""):
-        return DEFAULT_PLANNING_PULSE_RANGES[priority_name]
+        return DEFAULT_NEXT_TASK_TOO_FAR_AWAY_RANGES[priority_name]
 
     return int(raw_value)
 
 
-def is_planning_pulse_stale(context: PlanningContext) -> bool:
+def is_next_task_too_far_away(context: PlanningContext) -> bool:
     nearest_due_date = nearest_open_subtask_due_date(context)
     if nearest_due_date is None:
         return False
 
     priority_name = get_parent_priority_name(context)
-    allowed_range = get_planning_pulse_range(priority_name)
+    allowed_range = get_next_task_too_far_away_range(priority_name)
     threshold = context.due_date.date() + timedelta(days=allowed_range)
 
     return nearest_due_date > threshold

@@ -10,13 +10,18 @@ export interface PlanningProps extends cdk.StackProps {
     apiKey: string,
     teamId: string
   },
+  workdayOnlySpaceIds?: string[],
+  intertexto: {
+    apiKey: string,
+    state: string
+  },
   planning: {
     schedules: PlanningSchedule[]
-    planningPulseRanges: PlanningPulseRanges
+    nextTaskTooFarAwayRanges: NextTaskTooFarAwayRanges
   }
 }
 
-interface PlanningPulseRanges {
+interface NextTaskTooFarAwayRanges {
   urgent: number
   high: number
   normal: number
@@ -39,7 +44,7 @@ export class PlanningContruct extends Construct {
   constructor(scope: Construct, id: string, props: PlanningProps) {
     super(scope, id);
 
-    const planningPulseRanges = props.planning.planningPulseRanges
+    const nextTaskTooFarAwayRanges = props.planning.nextTaskTooFarAwayRanges
 
     const fn = new lambda.DockerImageFunction(this, 'ClickUp-Planning', {
       functionName: `ClickUp-Planning-${props.envName}`,
@@ -51,11 +56,14 @@ export class PlanningContruct extends Construct {
       environment: {
         CLICKUP_API_KEY: props.clickup.apiKey,
         CLICKUP_TEAM_ID: props.clickup.teamId,
-        PLANNING_PULSE_RANGE_URGENT: planningPulseRanges.urgent.toString(),
-        PLANNING_PULSE_RANGE_HIGH: planningPulseRanges.high.toString(),
-        PLANNING_PULSE_RANGE_NORMAL: planningPulseRanges.normal.toString(),
-        PLANNING_PULSE_RANGE_LOW: planningPulseRanges.low.toString(),
-        PLANNING_PULSE_RANGE_NONE: planningPulseRanges.none.toString(),
+        NEXT_TASK_TOO_FAR_AWAY_RANGE_URGENT: nextTaskTooFarAwayRanges.urgent.toString(),
+        NEXT_TASK_TOO_FAR_AWAY_RANGE_HIGH: nextTaskTooFarAwayRanges.high.toString(),
+        NEXT_TASK_TOO_FAR_AWAY_RANGE_NORMAL: nextTaskTooFarAwayRanges.normal.toString(),
+        NEXT_TASK_TOO_FAR_AWAY_RANGE_LOW: nextTaskTooFarAwayRanges.low.toString(),
+        NEXT_TASK_TOO_FAR_AWAY_RANGE_NONE: nextTaskTooFarAwayRanges.none.toString(),
+        PLANNING_WORKDAY_ONLY_SPACE_IDS: (props.workdayOnlySpaceIds ?? []).join(','),
+        INVERTEXTO_API_KEY: props.intertexto.apiKey ?? '',
+        INVERTEXTO_STATE: props.intertexto.state ?? '',
         TZ: 'America/Sao_Paulo'
       }
     });

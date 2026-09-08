@@ -1,14 +1,14 @@
 from .base import PlanningContext, PlanningStrategy, StrategyApplication
 from .rules import (
-    PLAN_THIS_SUBTASK_NAME,
-    PLANNING_PULSE_SUBTASK_NAME,
-    PlanningPulseStrategy,
+    NO_SUBTASKS_SUBTASK_NAME,
+    NEXT_TASK_TOO_FAR_AWAY_SUBTASK_NAME,
+    NextTaskTooFarAwayStrategy,
     NoOpenSubTasksStrategy,
 )
 
 PLANNING_STRATEGIES: tuple[PlanningStrategy, ...] = (
     NoOpenSubTasksStrategy(),
-    PlanningPulseStrategy(),
+    NextTaskTooFarAwayStrategy(),
 )
 
 
@@ -29,11 +29,11 @@ def apply_first_triggered_strategy(
     return None
 
 __all__ = [
-    "PLAN_THIS_SUBTASK_NAME",
-    "PLANNING_PULSE_SUBTASK_NAME",
+    "NO_SUBTASKS_SUBTASK_NAME",
+    "NEXT_TASK_TOO_FAR_AWAY_SUBTASK_NAME",
     "PLANNING_STRATEGIES",
     "NoOpenSubTasksStrategy",
-    "PlanningPulseStrategy",
+    "NextTaskTooFarAwayStrategy",
     "PlanningContext",
     "PlanningStrategy",
     "StrategyApplication",

@@ -84,6 +84,9 @@ def get_task_family(task: dict, seen_task_ids: set[str]):
 
     seen_task_ids.add(task_id)
 
+    if len(task.get('subtasks', [])) == 0:
+        return [task]
+
     detailed_task = get_task(task_id)
     task_family = [detailed_task]
 
