@@ -13,6 +13,14 @@ logging.basicConfig(
 
 LOGGER = logging.getLogger(__name__)
 
+PRIORITY_RANK = {
+    "urgent": 0,
+    "high": 1,
+    "normal": 2,
+    "low": 3,
+    "none": 4,
+}
+
 
 STRIKE_QNT_ENV_KEYS = {
     "urgent": "ANTI_PROCASTINATION_STRIKE_QNT_URGENT",
@@ -38,6 +46,18 @@ def get_strike_qnt_by_priority() -> dict[str, int]:
 def get_required_strike_qnt(task: dict, strike_qnt_by_priority: dict[str, int]) -> int:
     priority_name = clickup.get_priority_name(task)
     return strike_qnt_by_priority.get(priority_name, strike_qnt_by_priority["none"])
+
+
+def get_saved_required_strike_qnt(
+    saved_task: dict,
+    current_task: dict,
+    strike_qnt_by_priority: dict[str, int],
+) -> int:
+    priority_name = saved_task.get("priority") or clickup.get_priority_name(current_task)
+    return strike_qnt_by_priority.get(
+        str(priority_name).lower(),
+        strike_qnt_by_priority["none"],
+    )
 
 
 def get_workday_only_space_ids() -> set[str]:
@@ -76,6 +96,16 @@ def is_complete(task: dict) -> bool:
 
 def should_send_advice(strike_qnt: int, required_strike_qnt: int) -> bool:
     return strike_qnt >= required_strike_qnt
+
+
+def sort_by_criticality(tasks: list[dict]) -> list[dict]:
+    return sorted(
+        tasks,
+        key=lambda task: (
+            PRIORITY_RANK.get(str(task.get("priority", "none")).lower(), PRIORITY_RANK["none"]),
+            -int(task.get("strike_qnt", 0)),
+        ),
+    )
 
 
 def build_email_task(saved_task: dict, current_task: dict) -> dict:
@@ -137,13 +167,13 @@ def handler(event, context):
         "status_updates_saved": 0,
         "emails_sent": 0,
         "emails_skipped_incomplete_config": 0,
-        "celebration_emails_sent": 0,
-        "celebration_emails_skipped_incomplete_config": 0,
-        "success_streak_days": 0,
+        "victory_tasks_completed": 0,
+        "victory_streak_days": 0,
         "tasks_deleted_missing": 0,
         "tasks_deleted_completed": 0,
     }
     tasks_to_advise = []
+    completed_procrastinated_tasks = []
     existing_task_ids_before_run = {
         saved_task["task_id"] for saved_task in storage.get_all_tasks()
     }
@@ -180,6 +210,20 @@ def handler(event, context):
             continue
 
         if is_complete(current_task):
+            required_strike_qnt = get_saved_required_strike_qnt(
+                saved_task,
+                current_task,
+                strike_qnt_by_priority,
+            )
+            strike_qnt = int(saved_task.get("strike_qnt", 0))
+            if should_send_advice(strike_qnt, required_strike_qnt):
+                completed_procrastinated_tasks.append(build_email_task({
+                    **saved_task,
+                    "strike_qnt": strike_qnt,
+                    "required_strike_qnt": required_strike_qnt,
+                }, current_task))
+                totals["victory_tasks_completed"] += 1
+
             storage.delete_task(task_id)
             totals["tasks_deleted_completed"] += 1
             LOGGER.info("[TASK] deleted completed task=%s from dynamodb", task_id)
@@ -207,25 +251,32 @@ def handler(event, context):
                 "required_strike_qnt": required_strike_qnt,
             }, current_task))
 
-    if tasks_to_advise:
-        storage.reset_success_streak()
-        LOGGER.info("[EMAIL] sending advice for %s tasks", len(tasks_to_advise))
-        email_sent = emailer.send_advice(tasks_to_advise)
+    tasks_to_advise = sort_by_criticality(tasks_to_advise)
+    completed_procrastinated_tasks = sort_by_criticality(completed_procrastinated_tasks)
+
+    streak_days = None
+    if completed_procrastinated_tasks:
+        streak_days = storage.record_victory_day(date.today())
+        totals["victory_streak_days"] = streak_days
+
+    if completed_procrastinated_tasks or tasks_to_advise:
+        LOGGER.info(
+            "[EMAIL] sending report victories=%s pending=%s streak_days=%s",
+            len(completed_procrastinated_tasks),
+            len(tasks_to_advise),
+            streak_days or 0,
+        )
+        email_sent = emailer.send_report(
+            completed_tasks=completed_procrastinated_tasks,
+            pending_tasks=tasks_to_advise,
+            streak_days=streak_days,
+        )
         if email_sent:
             for task in tasks_to_advise:
                 storage.mark_email_sent(task["task_id"])
-            totals["emails_sent"] += len(tasks_to_advise)
+            totals["emails_sent"] = 1
         else:
-            totals["emails_skipped_incomplete_config"] += len(tasks_to_advise)
-    else:
-        streak_days = storage.record_success_day(date.today())
-        totals["success_streak_days"] = streak_days
-        LOGGER.info("[EMAIL] sending celebration streak_days=%s", streak_days)
-        email_sent = emailer.send_celebration(streak_days)
-        if email_sent:
-            totals["celebration_emails_sent"] += 1
-        else:
-            totals["celebration_emails_skipped_incomplete_config"] += 1
+            totals["emails_skipped_incomplete_config"] = 1
 
     LOGGER.info("[RESULT] %s", totals)
     return totals

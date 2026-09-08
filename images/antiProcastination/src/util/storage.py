@@ -6,7 +6,7 @@ from decimal import Decimal
 import boto3
 
 TABLE_NAME = os.getenv("ANTI_PROCASTINATION_TABLE_NAME")
-STREAK_TASK_ID = "__anti_procastination_streak__"
+VICTORY_STREAK_TASK_ID = "__anti_procastination_victory_streak__"
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
@@ -54,28 +54,28 @@ def to_int(value) -> int:
     return int(value)
 
 
-def record_success_day(reference_date: date) -> int:
+def record_victory_day(reference_date: date) -> int:
     current_date = reference_date.isoformat()
     previous_date = (reference_date - timedelta(days=1)).isoformat()
-    streak = get_streak()
-    last_success_date = streak.get("last_success_date")
+    streak = get_victory_streak()
+    last_victory_date = streak.get("last_victory_date")
 
-    if last_success_date == current_date:
-        current_streak = int(streak.get("current_streak", 0))
-    elif last_success_date == previous_date:
-        current_streak = int(streak.get("current_streak", 0)) + 1
+    if last_victory_date == current_date:
+        current_streak = int(streak.get("current_victory_streak", 0))
+    elif last_victory_date == previous_date:
+        current_streak = int(streak.get("current_victory_streak", 0)) + 1
     else:
         current_streak = 1
 
     table.update_item(
-        Key={"task_id": STREAK_TASK_ID},
+        Key={"task_id": VICTORY_STREAK_TASK_ID},
         UpdateExpression=(
-            "SET current_streak = :current_streak, "
-            "last_success_date = :last_success_date, updated_at = :updated_at"
+            "SET current_victory_streak = :current_streak, "
+            "last_victory_date = :last_victory_date, updated_at = :updated_at"
         ),
         ExpressionAttributeValues={
             ":current_streak": current_streak,
-            ":last_success_date": current_date,
+            ":last_victory_date": current_date,
             ":updated_at": now_iso(),
         },
     )
@@ -83,19 +83,8 @@ def record_success_day(reference_date: date) -> int:
     return current_streak
 
 
-def reset_success_streak() -> None:
-    table.update_item(
-        Key={"task_id": STREAK_TASK_ID},
-        UpdateExpression="SET current_streak = :current_streak, updated_at = :updated_at",
-        ExpressionAttributeValues={
-            ":current_streak": 0,
-            ":updated_at": now_iso(),
-        },
-    )
-
-
-def get_streak() -> dict:
-    res = table.get_item(Key={"task_id": STREAK_TASK_ID})
+def get_victory_streak() -> dict:
+    res = table.get_item(Key={"task_id": VICTORY_STREAK_TASK_ID})
     return res.get("Item", {})
 
 

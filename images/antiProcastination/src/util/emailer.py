@@ -48,20 +48,27 @@ def get_sender() -> str:
     return address
 
 
-def send_advice(tasks: list[dict]) -> bool:
-    if not tasks:
+def send_report(
+    completed_tasks: list[dict],
+    pending_tasks: list[dict],
+    streak_days: int | None,
+) -> bool:
+    if not completed_tasks and not pending_tasks:
         return False
 
     if not is_configured():
-        LOGGER.warning("[EMAIL] SMTP config incomplete, skipping %s tasks", len(tasks))
+        LOGGER.warning("[EMAIL] SMTP config incomplete, skipping report")
         return False
 
     message = EmailMessage()
-    message["Subject"] = get_subject(tasks)
+    message["Subject"] = get_report_subject(completed_tasks, pending_tasks, streak_days)
     message["From"] = get_sender()
     message["To"] = ", ".join(get_recipients())
-    message.set_content(render_text(tasks))
-    message.add_alternative(render_html(tasks), subtype="html")
+    message.set_content(render_report_text(completed_tasks, pending_tasks, streak_days))
+    message.add_alternative(
+        render_report_html(completed_tasks, pending_tasks, streak_days),
+        subtype="html",
+    )
 
     host = os.getenv("SMTP_HOST")
     port = int(os.getenv("SMTP_PORT", "587"))
@@ -78,84 +85,118 @@ def send_advice(tasks: list[dict]) -> bool:
     return True
 
 
-def send_celebration(streak_days: int) -> bool:
-    if not is_configured():
-        LOGGER.warning("[EMAIL] SMTP config incomplete, skipping celebration")
-        return False
+def get_report_subject(
+    completed_tasks: list[dict],
+    pending_tasks: list[dict],
+    streak_days: int | None,
+) -> str:
+    if completed_tasks:
+        day_word = "day" if streak_days == 1 else "days"
+        return (
+            f"\U0001F525 Victory day: {len(completed_tasks)} completed, "
+            f"{streak_days} {day_word} streak, {len(pending_tasks)} pending"
+        )
 
-    message = EmailMessage()
-    message["Subject"] = get_celebration_subject(streak_days)
-    message["From"] = get_sender()
-    message["To"] = ", ".join(get_recipients())
-    message.set_content(render_celebration_text(streak_days))
-    message.add_alternative(render_celebration_html(streak_days), subtype="html")
-
-    host = os.getenv("SMTP_HOST")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    username = os.getenv("SMTP_USERNAME")
-    password = os.getenv("SMTP_PASSWORD")
-
-    with smtplib.SMTP(host, port, timeout=30) as smtp:
-        if use_tls():
-            smtp.starttls()
-        if username and password:
-            smtp.login(username, password)
-        smtp.send_message(message)
-
-    return True
+    task_word = "task" if len(pending_tasks) == 1 else "tasks"
+    return f"{len(pending_tasks)} {task_word} reached their strike threshold"
 
 
-def get_subject(tasks: list[dict]) -> str:
-    task_word = "task" if len(tasks) == 1 else "tasks"
-    return f"{len(tasks)} {task_word} reached their strike threshold"
+def render_report_text(
+    completed_tasks: list[dict],
+    pending_tasks: list[dict],
+    streak_days: int | None,
+) -> str:
+    lines = ["AntiProcrastination report", ""]
 
-
-def get_celebration_subject(streak_days: int) -> str:
-    day_word = "day" if streak_days == 1 else "days"
-    return f"\U0001F525 Streak unlocked: {streak_days} {day_word} clean!"
-
-
-def render_celebration_text(streak_days: int) -> str:
-    day_word = "day" if streak_days == 1 else "days"
-    level = get_streak_level(streak_days)
-    progress = get_streak_progress(streak_days)
-    lines = [
-        "You're on fire",
-        "",
-        f"Current streak: {streak_days} {day_word}",
-        f"Level: {level['name']}",
-        "",
-        "No procrastinated tasks today. Your streak is alive.",
-        "",
-    ]
-
-    if progress["max_level"]:
+    if completed_tasks:
+        day_word = "day" if streak_days == 1 else "days"
         lines.extend([
-            "Max level reached. Legendary status is active.",
+            "Victory day!",
+            f"You completed {len(completed_tasks)} procrastinated task(s).",
+            f"Current victory streak: {streak_days} {day_word}",
+            "",
+            "Completed victories",
             "",
         ])
-    else:
+        lines.extend(render_task_text_rows(completed_tasks))
+
+    if pending_tasks:
         lines.extend([
-            f"Next level: {progress['current']} / {progress['target']} days to {progress['next_name']} 🔥",
+            "Tasks to solve",
+            "Ordered by priority and strike quantity.",
             "",
         ])
+        lines.extend(render_task_text_rows(pending_tasks))
 
     lines.append("This notification was generated automatically by AntiProcrastination.")
     return "\n".join(lines)
 
 
-def render_celebration_html(streak_days: int) -> str:
-    day_word = "day" if streak_days == 1 else "days"
-    level = get_streak_level(streak_days)
-    progress = get_streak_progress(streak_days)
-    progress_html = render_streak_progress_html(progress)
+def render_task_text_rows(tasks: list[dict]) -> list[str]:
+    lines = []
+    for index, task in enumerate(tasks, start=1):
+        lines.extend([
+            f"Task {index}",
+            f"Task: {task.get('task_name', task['task_id'])}",
+            f"Status: {task.get('current_status', '')}",
+            f"Due date: {format_timestamp_date(task.get('due_date', ''))}",
+            f"Priority: {task.get('priority', '')}",
+            f"Strikes: {format_strike_qnt(task.get('strike_qnt', ''))}",
+            f"Strike threshold: {format_strike_qnt(task.get('required_strike_qnt', ''))}",
+            f"URL: {task.get('task_url') or '(no url)'}",
+            "",
+        ])
+    return lines
+
+
+def render_report_html(
+    completed_tasks: list[dict],
+    pending_tasks: list[dict],
+    streak_days: int | None,
+) -> str:
+    completed_section = ""
+    if completed_tasks:
+        completed_rows = "\n".join(
+            render_task_html(index, task)
+            for index, task in enumerate(completed_tasks, start=1)
+        )
+        completed_section = f"""
+          <tr>
+            <td style="padding: 28px 32px 10px;">
+              {render_victory_summary_html(streak_days, len(completed_tasks))}
+              <div style="font-size: 18px; font-weight: 700; color: #202124; margin: 28px 0 14px;">Completed victories</div>
+              {completed_rows}
+            </td>
+          </tr>"""
+
+    pending_section = ""
+    if pending_tasks:
+        pending_rows = "\n".join(
+            render_task_html(index, task)
+            for index, task in enumerate(pending_tasks, start=1)
+        )
+        pending_section = f"""
+          <tr>
+            <td style="padding: 28px 32px;">
+              <div style="font-size: 18px; font-weight: 700; color: #202124; margin-bottom: 6px;">Tasks to solve</div>
+              <div style="font-size: 13px; color: #7a7a7a; margin-bottom: 18px;">Ordered by priority and strike quantity.</div>
+              {pending_rows}
+            </td>
+          </tr>"""
+
+    title = "Victory day!" if completed_tasks else "Tasks need your attention"
+    subtitle = (
+        f"{len(completed_tasks)} procrastinated task(s) completed today."
+        if completed_tasks
+        else f"{len(pending_tasks)} task(s) reached their strike threshold."
+    )
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AntiProcrastination Celebration</title>
+  <title>AntiProcrastination Report</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f7f8fa; font-family: Arial, Helvetica, sans-serif; color: #242424;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f7f8fa; padding: 32px 16px;">
@@ -165,25 +206,12 @@ def render_celebration_html(streak_days: int) -> str:
           <tr>
             <td style="padding: 26px 32px; border-bottom: 1px solid #eeeeee;">
               <div style="font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #7b68ee; margin-bottom: 8px;">AntiProcrastination</div>
-              <div style="font-size: 24px; font-weight: 700; line-height: 1.3; color: #202020;">You're on fire!</div>
-              <div style="margin-top: 8px; font-size: 14px; line-height: 1.5; color: #7a7a7a;">No procrastinated tasks today. Your streak is alive.</div>
+              <div style="font-size: 24px; font-weight: 700; line-height: 1.3; color: #202020;">{title}</div>
+              <div style="margin-top: 8px; font-size: 14px; line-height: 1.5; color: #7a7a7a;">{subtitle}</div>
             </td>
           </tr>
-          <tr>
-            <td style="padding: 32px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid #e6e8eb; border-radius: 10px; background-color: #ffffff;">
-                <tr>
-                  <td align="center" style="padding: 30px 24px;">
-                    <div style="font-size: 44px; line-height: 1.2; margin-bottom: 16px;">{render_fire_emojis(level)}</div>
-                    <div style="font-size: 13px; font-weight: bold; color: #7b68ee; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">{level['name']} level</div>
-                    <div style="font-size: 42px; line-height: 1; font-weight: 700; color: #202124; margin-bottom: 8px;">{streak_days}</div>
-                    <div style="font-size: 16px; color: #7a7a7a; margin-bottom: 24px;">{day_word} with no pending AntiProcrastination tasks</div>
-                    {progress_html}
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+          {completed_section}
+          {pending_section}
           <tr>
             <td style="padding: 18px 32px; background-color: #fafafa; border-top: 1px solid #eeeeee; font-size: 11px; color: #a0a0a0;">This notification was generated automatically by AntiProcrastination.</td>
           </tr>
@@ -193,6 +221,24 @@ def render_celebration_html(streak_days: int) -> str:
   </table>
 </body>
 </html>"""
+
+
+def render_victory_summary_html(streak_days: int, completed_count: int) -> str:
+    level = get_streak_level(streak_days)
+    progress = get_streak_progress(streak_days)
+    day_word = "day" if streak_days == 1 else "days"
+    return f"""
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid #e6e8eb; border-radius: 10px; background-color: #ffffff;">
+                <tr>
+                  <td align="center" style="padding: 26px 24px;">
+                    <div style="font-size: 36px; line-height: 1.2; margin-bottom: 12px;">{render_fire_emojis(level)}</div>
+                    <div style="font-size: 13px; font-weight: bold; color: #7b68ee; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">{level['name']} level</div>
+                    <div style="font-size: 34px; line-height: 1; font-weight: 700; color: #202124; margin-bottom: 8px;">{streak_days}</div>
+                    <div style="font-size: 15px; color: #7a7a7a; margin-bottom: 18px;">{day_word} victory streak · {completed_count} completed today</div>
+                    {render_streak_progress_html(progress)}
+                  </td>
+                </tr>
+              </table>"""
 
 
 def get_streak_level(streak_days: int) -> dict:
@@ -248,78 +294,6 @@ def render_streak_progress_html(progress: dict) -> str:
 
 def render_fire_emojis(level: dict) -> str:
     return " ".join(["&#128293;"] * int(level["fires"]))
-
-
-def render_text(tasks: list[dict]) -> str:
-    task_word = "task" if len(tasks) == 1 else "tasks"
-    lines = [
-        f"{len(tasks)} {task_word} reached their strike threshold",
-        "",
-        "The following tasks have reached or exceeded the configured strike quantity and may need your attention.",
-        "",
-    ]
-
-    for index, task in enumerate(tasks, start=1):
-        lines.extend([
-            f"Task {index}",
-            f"Task: {task.get('task_name', task['task_id'])}",
-            f"Status: {task.get('current_status', '')}",
-            f"First detected: {format_date(task.get('first_seen_at', ''))}",
-            f"Due date: {format_timestamp_date(task.get('due_date', ''))}",
-            f"Space: {task.get('space_name') or task.get('space_id', '')}",
-            f"Parent task: {format_parent_task_text(task)}",
-            f"Priority: {task.get('priority', '')}",
-            f"Strikes: {format_strike_qnt(task.get('strike_qnt', ''))}",
-            f"Strike threshold: {format_strike_qnt(task.get('required_strike_qnt', ''))}",
-            f"Time estimate: {format_time_estimate(task.get('time_estimate', ''))}",
-            f"URL: {task.get('task_url') or '(no url)'}",
-            "",
-        ])
-
-    lines.append("This notification was generated automatically by AntiProcrastination.")
-    return "\n".join(lines)
-
-
-def render_html(tasks: list[dict]) -> str:
-    task_word = "task" if len(tasks) == 1 else "tasks"
-    task_rows = "\n".join(
-        render_task_html(index, task)
-        for index, task in enumerate(tasks, start=1)
-    )
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AntiProcrastination Alert</title>
-</head>
-<body style="margin: 0; padding: 0; background-color: #f7f8fa; font-family: Arial, Helvetica, sans-serif; color: #242424;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f7f8fa; padding: 32px 16px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 640px; background-color: #ffffff; border: 1px solid #e8e8e8; border-radius: 12px; overflow: hidden;">
-          <tr>
-            <td style="padding: 26px 32px; border-bottom: 1px solid #eeeeee;">
-              <div style="font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #7b68ee; margin-bottom: 8px;">AntiProcrastination</div>
-              <div style="font-size: 24px; font-weight: 700; line-height: 1.3; color: #202020;">{len(tasks)} {task_word} reached their strike threshold</div>
-              <div style="margin-top: 8px; font-size: 14px; line-height: 1.5; color: #7a7a7a;">These tasks have reached or exceeded the configured strike quantity.</div>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding: 28px 32px;">
-              {task_rows}
-            </td>
-          </tr>
-          <tr>
-            <td style="padding: 18px 32px; background-color: #fafafa; border-top: 1px solid #eeeeee; font-size: 11px; color: #a0a0a0;">This notification was generated automatically by AntiProcrastination.</td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>"""
 
 
 def render_task_html(index: int, task: dict) -> str:
