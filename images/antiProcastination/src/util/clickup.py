@@ -1,12 +1,11 @@
 import os
 from datetime import date, datetime
 
-from .https import HttpClient
+from .https import HttpClient, RequestException
 
 API_KEY = os.getenv("CLICKUP_API_KEY")
 TEAM_ID = os.getenv("CLICKUP_TEAM_ID")
 
-TODO_STATUS = "to do"
 PRIORITY_NAMES = {"urgent", "high", "normal", "low"}
 PRIORITY_ID_TO_NAME = {
     "1": "urgent",
@@ -28,6 +27,26 @@ http_client = HttpClient(
 
 
 def get_tasks():
+    """Fetch open tasks due today, including archived tasks.
+
+    ClickUp's team filtered tasks endpoint accepts `archived` the same way the
+    list Get Tasks endpoint documents it. Non-archived and archived results are
+    fetched separately and merged.
+    """
+    today_start_ms = int(datetime.combine(date.today(), datetime.min.time()).timestamp() * 1000)
+    today_end_ms = int(datetime.combine(date.today(), datetime.max.time()).timestamp() * 1000)
+
+    tasks_by_id = {}
+
+    for archived in (False, True):
+        for task in _get_open_tasks(archived=archived):
+            if is_due_today(task, today_start_ms, today_end_ms):
+                tasks_by_id[task["id"]] = task
+
+    return list(tasks_by_id.values())
+
+
+def _get_open_tasks(*, archived: bool):
     tasks = []
     page = 0
 
@@ -38,7 +57,7 @@ def get_tasks():
                 "page": page,
                 "subtasks": "true",
                 "include_closed": "false",
-                "statuses[]": [TODO_STATUS],
+                "archived": "true" if archived else "false",
             }
         )
         tasks += res.data["tasks"]
@@ -48,13 +67,7 @@ def get_tasks():
 
         page += 1
 
-    today_end_ms = int(datetime.combine(date.today(), datetime.max.time()).timestamp() * 1000)
-
-    return [
-        task for task in tasks
-        if is_to_do(task)
-        and is_due_today_or_before(task, today_end_ms)
-    ]
+    return [task for task in tasks if is_open(task)]
 
 
 def get_task(task_id: str):
@@ -66,6 +79,10 @@ def get_task(task_id: str):
     )
 
     return res.data
+
+
+def task_not_found(error: Exception) -> bool:
+    return isinstance(error, RequestException) and error.status == 404
 
 
 def get_space_name(space_id: str | None) -> str:
@@ -120,22 +137,27 @@ def get_parent_task_id(task: dict) -> str | None:
     return None
 
 
-def is_to_do(task: dict) -> bool:
+def is_open(task: dict) -> bool:
     status = task.get("status")
 
     if isinstance(status, dict):
-        return str(status.get("status", "")).lower() == TODO_STATUS
+        status_type = str(status.get("type", "")).lower()
+        status_name = str(status.get("status", "")).lower()
+        return status_type not in {"closed", "done"} and status_name not in {
+            "complete", "completed", "closed", "done"
+        }
 
-    return str(status or "").lower() == TODO_STATUS
+    return str(status or "").lower() not in {"complete", "completed", "closed", "done"}
 
 
-def is_due_today_or_before(task: dict, today_end_ms: int) -> bool:
+def is_due_today(task: dict, today_start_ms: int, today_end_ms: int) -> bool:
     due_date = task.get("due_date")
 
     if due_date in (None, ""):
         return False
 
-    return int(due_date) <= today_end_ms
+    due_date_ms = int(due_date)
+    return today_start_ms <= due_date_ms <= today_end_ms
 
 
 def get_priority_name(task: dict) -> str:

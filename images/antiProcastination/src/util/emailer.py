@@ -107,7 +107,7 @@ def send_celebration(streak_days: int) -> bool:
 
 def get_subject(tasks: list[dict]) -> str:
     task_word = "task" if len(tasks) == 1 else "tasks"
-    return f"{len(tasks)} {task_word} past their priority threshold"
+    return f"{len(tasks)} {task_word} reached their strike threshold"
 
 
 def get_celebration_subject(streak_days: int) -> str:
@@ -253,9 +253,9 @@ def render_fire_emojis(level: dict) -> str:
 def render_text(tasks: list[dict]) -> str:
     task_word = "task" if len(tasks) == 1 else "tasks"
     lines = [
-        f"{len(tasks)} {task_word} past their priority threshold",
+        f"{len(tasks)} {task_word} reached their strike threshold",
         "",
-        "The following tasks have not been completed within the configured threshold and may need your attention.",
+        "The following tasks have reached or exceeded the configured strike quantity and may need your attention.",
         "",
     ]
 
@@ -269,7 +269,8 @@ def render_text(tasks: list[dict]) -> str:
             f"Space: {task.get('space_name') or task.get('space_id', '')}",
             f"Parent task: {format_parent_task_text(task)}",
             f"Priority: {task.get('priority', '')}",
-            f"Threshold: {format_days_before_advice(task.get('days_before_advice', ''))}",
+            f"Strikes: {format_strike_qnt(task.get('strike_qnt', ''))}",
+            f"Strike threshold: {format_strike_qnt(task.get('required_strike_qnt', ''))}",
             f"Time estimate: {format_time_estimate(task.get('time_estimate', ''))}",
             f"URL: {task.get('task_url') or '(no url)'}",
             "",
@@ -301,8 +302,8 @@ def render_html(tasks: list[dict]) -> str:
           <tr>
             <td style="padding: 26px 32px; border-bottom: 1px solid #eeeeee;">
               <div style="font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #7b68ee; margin-bottom: 8px;">AntiProcrastination</div>
-              <div style="font-size: 24px; font-weight: 700; line-height: 1.3; color: #202020;">{len(tasks)} {task_word} past their priority threshold</div>
-              <div style="margin-top: 8px; font-size: 14px; line-height: 1.5; color: #7a7a7a;">These tasks have remained incomplete past the configured threshold.</div>
+              <div style="font-size: 24px; font-weight: 700; line-height: 1.3; color: #202020;">{len(tasks)} {task_word} reached their strike threshold</div>
+              <div style="margin-top: 8px; font-size: 14px; line-height: 1.5; color: #7a7a7a;">These tasks have reached or exceeded the configured strike quantity.</div>
             </td>
           </tr>
           <tr>
@@ -330,7 +331,8 @@ def render_task_html(index: int, task: dict) -> str:
     list_name = escape(str(task.get("list_name", "")))
     parent_task = render_parent_task_html(task)
     priority = escape(str(task.get("priority", "")))
-    threshold = escape(format_days_before_advice(task.get("days_before_advice", "")))
+    strikes = escape(format_strike_qnt(task.get("strike_qnt", "")))
+    strike_threshold = escape(format_strike_qnt(task.get("required_strike_qnt", "")))
     time_estimate = escape(format_time_estimate(task.get("time_estimate", "")))
     task_url = escape(str(task.get("task_url") or "#"), quote=True)
 
@@ -351,12 +353,12 @@ def render_task_html(index: int, task: dict) -> str:
                         {render_detail_cell("Priority", priority.capitalize(), "0 0 20px 12px")}
                       </tr>
                       <tr>
-                        {render_detail_cell("Threshold", threshold, "0 12px 20px 0")}
-                        {render_detail_cell("Time estimate", time_estimate, "0 0 20px 12px")}
+                        {render_detail_cell("Strikes", strikes, "0 12px 20px 0")}
+                        {render_detail_cell("Strike threshold", strike_threshold, "0 0 20px 12px")}
                       </tr>
                       <tr>
                         {render_detail_cell("First detected", first_seen, "0 12px 20px 0")}
-                        <td width="50%"></td>
+                        {render_detail_cell("Time estimate", time_estimate, "0 0 20px 12px")}
                       </tr>
                       {render_parent_task_row(parent_task)}
                     </table>
@@ -373,17 +375,17 @@ def render_task_html(index: int, task: dict) -> str:
               <div style="height: 18px; line-height: 18px;">&nbsp;</div>"""
 
 
-def format_days_before_advice(value) -> str:
+def format_strike_qnt(value) -> str:
     if value in (None, ""):
         return ""
 
     try:
-        days = int(value)
+        strikes = int(value)
     except (TypeError, ValueError):
         return str(value)
 
-    day_word = "day" if days == 1 else "days"
-    return f"{days} {day_word}"
+    strike_word = "strike" if strikes == 1 else "strikes"
+    return f"{strikes} {strike_word}"
 
 
 def format_date(value: str) -> str:

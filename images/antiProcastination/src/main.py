@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 
 from util import clickup, emailer, holiday, storage
 
@@ -14,34 +14,30 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 
-PRIORITY_DAYS_ENV_KEYS = {
-    "urgent": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_URGENT",
-    "high": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_HIGH",
-    "normal": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_NORMAL",
-    "low": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_LOW",
-    "none": "ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_NONE",
+STRIKE_QNT_ENV_KEYS = {
+    "urgent": "ANTI_PROCASTINATION_STRIKE_QNT_URGENT",
+    "high": "ANTI_PROCASTINATION_STRIKE_QNT_HIGH",
+    "normal": "ANTI_PROCASTINATION_STRIKE_QNT_NORMAL",
+    "low": "ANTI_PROCASTINATION_STRIKE_QNT_LOW",
+    "none": "ANTI_PROCASTINATION_STRIKE_QNT_NONE",
 }
 
 
-def get_days_before_advice_by_priority() -> dict[str, int]:
-    days_by_priority = {}
+def get_strike_qnt_by_priority() -> dict[str, int]:
+    strike_qnt_by_priority = {}
 
-    for priority_name, env_key in PRIORITY_DAYS_ENV_KEYS.items():
-        days = int(os.getenv(env_key, "0"))
-        if days <= 0:
+    for priority_name, env_key in STRIKE_QNT_ENV_KEYS.items():
+        strike_qnt = int(os.getenv(env_key, "0"))
+        if strike_qnt <= 0:
             raise ValueError(f"{env_key} must be greater than zero")
-        days_by_priority[priority_name] = days
+        strike_qnt_by_priority[priority_name] = strike_qnt
 
-    return days_by_priority
+    return strike_qnt_by_priority
 
 
-def get_days_before_advice(task: dict, days_by_priority: dict[str, int]) -> int:
+def get_required_strike_qnt(task: dict, strike_qnt_by_priority: dict[str, int]) -> int:
     priority_name = clickup.get_priority_name(task)
-    return days_by_priority.get(priority_name, days_by_priority["none"])
-
-
-def parse_iso(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return strike_qnt_by_priority.get(priority_name, strike_qnt_by_priority["none"])
 
 
 def get_workday_only_space_ids() -> set[str]:
@@ -75,29 +71,11 @@ def should_skip_space(
 
 
 def is_complete(task: dict) -> bool:
-    status = task.get("status")
-
-    if isinstance(status, dict):
-        status_name = str(status.get("status", "")).lower()
-        status_type = str(status.get("type", "")).lower()
-        return status_type in {"closed", "done"} or status_name in {"complete", "completed", "closed", "done"}
-
-    return str(status or "").lower() in {"complete", "completed", "closed", "done"}
+    return not clickup.is_open(task)
 
 
-def should_send_advice(saved_task: dict, current_task: dict, days_before_advice: int) -> bool:
-    if is_complete(current_task):
-        return False
-
-    first_seen_at = saved_task.get("first_seen_at")
-    if not first_seen_at:
-        return False
-
-    threshold = datetime.now(timezone.utc) - timedelta(days=days_before_advice)
-    if parse_iso(first_seen_at) > threshold:
-        return False
-
-    return True
+def should_send_advice(strike_qnt: int, required_strike_qnt: int) -> bool:
+    return strike_qnt >= required_strike_qnt
 
 
 def build_email_task(saved_task: dict, current_task: dict) -> dict:
@@ -118,7 +96,8 @@ def build_email_task(saved_task: dict, current_task: dict) -> dict:
         "parent_task_url": parent_task.get("url", "") if parent_task else "",
         "priority": clickup.get_priority_name(current_task),
         "time_estimate": current_task.get("time_estimate", ""),
-        "days_before_advice": saved_task.get("days_before_advice", ""),
+        "strike_qnt": saved_task.get("strike_qnt", 0),
+        "required_strike_qnt": saved_task.get("required_strike_qnt", ""),
     }
 
 
@@ -145,32 +124,44 @@ def get_parent_task(task: dict) -> dict | None:
 
 
 def handler(event, context):
-    days_by_priority = get_days_before_advice_by_priority()
+    strike_qnt_by_priority = get_strike_qnt_by_priority()
     workday_only_space_ids = get_workday_only_space_ids()
     today_is_workday = is_workday(date.today(), len(workday_only_space_ids) > 0)
     totals = {
         "candidate_tasks_saved": 0,
         "candidate_tasks_skipped_non_workday_space": 0,
+        "candidate_tasks_already_saved": 0,
         "saved_tasks_checked": 0,
         "saved_tasks_skipped_non_workday_space": 0,
+        "strikes_incremented": 0,
         "status_updates_saved": 0,
         "emails_sent": 0,
         "emails_skipped_incomplete_config": 0,
         "celebration_emails_sent": 0,
         "celebration_emails_skipped_incomplete_config": 0,
         "success_streak_days": 0,
-        "tasks_not_found": 0,
+        "tasks_deleted_missing": 0,
+        "tasks_deleted_completed": 0,
     }
     tasks_to_advise = []
+    existing_task_ids_before_run = {
+        saved_task["task_id"] for saved_task in storage.get_all_tasks()
+    }
 
     for task in clickup.get_tasks():
+        task_id = str(task["id"])
+
         if should_skip_space(clickup.get_space_id(task), workday_only_space_ids, today_is_workday):
             totals["candidate_tasks_skipped_non_workday_space"] += 1
             continue
 
-        storage.save_candidate(task)
+        if task_id in existing_task_ids_before_run:
+            totals["candidate_tasks_already_saved"] += 1
+            continue
+
+        storage.save_new_candidate(task)
         totals["candidate_tasks_saved"] += 1
-        LOGGER.info("[TASK] saved candidate task=%s", task["id"])
+        LOGGER.info("[TASK] saved candidate task=%s strike_qnt=0", task_id)
 
     for saved_task in storage.get_all_tasks():
         task_id = saved_task["task_id"]
@@ -178,23 +169,42 @@ def handler(event, context):
 
         try:
             current_task = clickup.get_task(task_id)
-        except Exception:
+        except Exception as error:
+            if clickup.task_not_found(error):
+                storage.delete_task(task_id)
+                totals["tasks_deleted_missing"] += 1
+                LOGGER.info("[TASK] deleted missing task=%s from dynamodb", task_id)
+                continue
+
             LOGGER.exception("[TASK] failed to get current status task=%s", task_id)
-            totals["tasks_not_found"] += 1
+            continue
+
+        if is_complete(current_task):
+            storage.delete_task(task_id)
+            totals["tasks_deleted_completed"] += 1
+            LOGGER.info("[TASK] deleted completed task=%s from dynamodb", task_id)
             continue
 
         if should_skip_space(clickup.get_space_id(current_task), workday_only_space_ids, today_is_workday):
             totals["saved_tasks_skipped_non_workday_space"] += 1
             continue
 
-        storage.save_current_status(task_id, current_task)
+        required_strike_qnt = get_required_strike_qnt(current_task, strike_qnt_by_priority)
+        strike_qnt = int(saved_task.get("strike_qnt", 0))
+
+        # New tasks saved in this run stay at 0. Already-tracked tasks get +1.
+        if task_id in existing_task_ids_before_run:
+            strike_qnt = storage.increment_strike(task_id)
+            totals["strikes_incremented"] += 1
+
+        storage.save_current_status(task_id, current_task, strike_qnt=strike_qnt)
         totals["status_updates_saved"] += 1
 
-        days_before_advice = get_days_before_advice(current_task, days_by_priority)
-        if should_send_advice(saved_task, current_task, days_before_advice):
+        if should_send_advice(strike_qnt, required_strike_qnt):
             tasks_to_advise.append(build_email_task({
                 **saved_task,
-                "days_before_advice": days_before_advice,
+                "strike_qnt": strike_qnt,
+                "required_strike_qnt": required_strike_qnt,
             }, current_task))
 
     if tasks_to_advise:
