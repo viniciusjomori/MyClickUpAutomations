@@ -26,7 +26,7 @@ export interface ClickUpAutomationProps extends cdk.StackProps {
     to: string[]
   },
   antiProcastination: {
-    daysBeforeAdvice: {
+    strikeQnt: {
       urgent: number,
       high: number,
       normal: number,

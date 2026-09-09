@@ -1,0 +1,130 @@
+{
+  "clickup": {
+    "apiKey": "pk_YOUR_CLICKUP_API_KEY",
+    "teamId": "YOUR_TEAM_ID"
+  },
+  "workdayOnlySpaceIds": [
+    "SPACE_ID_WORK_ONLY"
+  ],
+  "smtp": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "username": "smtp-user",
+    "password": "smtp-password",
+    "useTls": true,
+    "name": "ClickUp Automations",
+    "from": "noreply@example.com",
+    "to": [
+      "you@example.com"
+    ]
+  },
+  "intertexto": {
+    "apiKey": "YOUR_INVERTEXTO_API_KEY",
+    "state": "SP"
+  },
+  "antiProcastination": {
+    "strikeQnt": {
+      "urgent": 1,
+      "high": 2,
+      "normal": 3,
+      "low": 4,
+      "none": 5
+    },
+    "schedules": [
+      {
+        "ruleId": "morning",
+        "hour": "9",
+        "minute": "0",
+        "weekDay": "MON-FRI",
+        "timeZone": "America/Sao_Paulo"
+      }
+    ]
+  },
+  "backup": {
+    "schedules": [
+      {
+        "ruleId": "daily",
+        "hour": "3",
+        "minute": "0",
+        "timeZone": "America/Sao_Paulo"
+      }
+    ]
+  },
+  "currentize": {
+    "schedules": [
+      {
+        "ruleId": "hourly",
+        "hour": "*",
+        "minute": "0",
+        "timeZone": "America/Sao_Paulo"
+      }
+    ]
+  },
+  "deleteOldEmptyTasks": {
+    "days": 30,
+    "ignoredSpaceIds": [
+      "SPACE_ID_TO_KEEP"
+    ],
+    "schedules": [
+      {
+        "ruleId": "weekly",
+        "hour": "4",
+        "minute": "0",
+        "weekDay": "SUN",
+        "timeZone": "America/Sao_Paulo"
+      }
+    ]
+  },
+  "planning": {
+    "nextTaskTooFarAwayRanges": {
+      "urgent": 1,
+      "high": 3,
+      "normal": 7,
+      "low": 14,
+      "none": 21
+    },
+    "schedules": [
+      {
+        "ruleId": "morning",
+        "hour": "8",
+        "minute": "0",
+        "weekDay": "MON-FRI",
+        "timeZone": "America/Sao_Paulo"
+      }
+    ]
+  },
+  "tagArchive": [
+    {
+      "ruleId": "remind-me",
+      "tag": "archive-today",
+      "archive": {
+        "hour": "20",
+        "minute": "0"
+      },
+      "unarchive": {
+        "hour": "8",
+        "minute": "0"
+      },
+      "weekDay": "MON-FRI",
+      "holidays": "consider",
+      "timeZone": "America/Sao_Paulo"
+    }
+  ],
+  "remindMeLater": {
+    "period": {
+      "hour": "*",
+      "minute": "*/15",
+      "timeZone": "America/Sao_Paulo"
+    },
+    "tags": [
+      {
+        "tag": "remind-15m",
+        "delayMinutes": 15
+      },
+      {
+        "tag": "remind-1h",
+        "delayMinutes": 60
+      }
+    ]
+  }
+}

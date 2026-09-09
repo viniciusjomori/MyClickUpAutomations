@@ -27,12 +27,12 @@ export interface AntiProcastinationProps extends cdk.StackProps {
     to: string[]
   },
   antiProcastination: {
-    daysBeforeAdvice: DaysBeforeAdvice,
+    strikeQnt: StrikeQnt,
     schedules: AntiProcastinationSchedule[]
   }
 }
 
-interface DaysBeforeAdvice {
+interface StrikeQnt {
   urgent: number
   high: number
   normal: number
@@ -81,11 +81,11 @@ export class AntiProcastinationContruct extends Construct {
         CLICKUP_TEAM_ID: props.clickup.teamId,
         ANTI_PROCASTINATION_WORKDAY_ONLY_SPACE_IDS: (props.workdayOnlySpaceIds ?? []).join(','),
         ANTI_PROCASTINATION_TABLE_NAME: table.tableName,
-        ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_URGENT: props.antiProcastination.daysBeforeAdvice.urgent.toString(),
-        ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_HIGH: props.antiProcastination.daysBeforeAdvice.high.toString(),
-        ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_NORMAL: props.antiProcastination.daysBeforeAdvice.normal.toString(),
-        ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_LOW: props.antiProcastination.daysBeforeAdvice.low.toString(),
-        ANTI_PROCASTINATION_DAYS_BEFORE_ADVICE_NONE: props.antiProcastination.daysBeforeAdvice.none.toString(),
+        ANTI_PROCASTINATION_STRIKE_QNT_URGENT: props.antiProcastination.strikeQnt.urgent.toString(),
+        ANTI_PROCASTINATION_STRIKE_QNT_HIGH: props.antiProcastination.strikeQnt.high.toString(),
+        ANTI_PROCASTINATION_STRIKE_QNT_NORMAL: props.antiProcastination.strikeQnt.normal.toString(),
+        ANTI_PROCASTINATION_STRIKE_QNT_LOW: props.antiProcastination.strikeQnt.low.toString(),
+        ANTI_PROCASTINATION_STRIKE_QNT_NONE: props.antiProcastination.strikeQnt.none.toString(),
         INVERTEXTO_API_KEY: props.intertexto.apiKey ?? '',
         INVERTEXTO_STATE: props.intertexto.state ?? '',
         SMTP_HOST: props.smtp.host,
